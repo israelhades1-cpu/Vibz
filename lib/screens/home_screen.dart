@@ -228,7 +228,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Text(
-                  'Écoutés Réciement',
+                  'Écoutés Récemment',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 20,
@@ -300,7 +300,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 20),
             child: Text(
-              'Touttes les Musiques',
+              'Toutes les Musiques',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 20,

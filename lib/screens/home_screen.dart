@@ -1,11 +1,19 @@
 import 'package:flutter/material.dart';
 import '../models/song.dart';
+import '../services/audio_library_service.dart';
 import '../widgets/album_card.dart';
 import '../widgets/song_list_tile.dart';
 import '../widgets/mini_player.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({Key? key}) : super(key: key);
+  final List<Song> initialSongs;
+  final Map<String, int> libraryStats;
+
+  const HomeScreen({
+    Key? key,
+    required this.initialSongs,
+    required this.libraryStats,
+  }) : super(key: key);
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -13,49 +21,21 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  final AudioLibraryService _libraryService = AudioLibraryService();
+  
   int _selectedTabIndex = 0;
   bool _isPlaying = false;
+  bool _isLoading = false;
 
-  // Mock data - replace with real data from your providers
-  final List<Album> _recentAlbums = [
-    Album(
-      id: '1',
-      name: 'Album 1',
-      artworkUrl: null, // Add your asset path
-      songs: [],
-    ),
-    Album(
-      id: '2',
-      name: 'Album 2',
-      artworkUrl: null,
-      songs: [],
-    ),
-    Album(
-      id: '3',
-      name: 'Album 3',
-      artworkUrl: null,
-      songs: [],
-    ),
-  ];
-
-  final List<Song> _allSongs = [
-    Song(
-      id: '1',
-      title: 'Song Title One',
-      artist: 'Artist A',
-      duration: '1:21',
-      albumArt: null,
-    ),
-    Song(
-      id: '2',
-      title: 'Longer Song Title Two',
-      artist: 'Artist B',
-      duration: '2:10',
-      albumArt: null,
-    ),
-  ];
-
+  List<Album> _recentAlbums = [];
+  List<Song> _allSongs = [];
+  List<Song> _favoriteSongs = [];
+  List<Song> _historySongs = [];
+  List<Song> _filteredSongs = [];
+  
   Song? _currentSong;
+  
+  final TextEditingController _searchController = TextEditingController();
 
   @override
   void initState() {
@@ -66,15 +46,108 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         _selectedTabIndex = _tabController.index;
       });
     });
-    // Set first song as current
+    
+    // Initialiser avec les données scannées
+    _allSongs = widget.initialSongs;
+    _filteredSongs = _allSongs;
+    
+    // Charger les albums
+    _loadAlbums();
+    
+    // Définir la première chanson comme courante si disponible
     if (_allSongs.isNotEmpty) {
       _currentSong = _allSongs[0];
     }
   }
 
+  Future<void> _loadAlbums() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      List<Album> albums = await _libraryService.scanAlbums();
+      setState(() {
+        _recentAlbums = albums.take(10).toList(); // Prendre les 10 premiers
+        _isLoading = false;
+      });
+    } catch (e) {
+      print('Erreur lors du chargement des albums: $e');
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _refreshLibrary() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      List<Song> songs = await _libraryService.scanAudioFiles();
+      setState(() {
+        _allSongs = songs;
+        _filteredSongs = songs;
+        _isLoading = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${songs.length} chansons détectées'),
+          backgroundColor: const Color(0xFF00D9FF),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      print('Erreur lors du rafraîchissement: $e');
+      setState(() {
+        _isLoading = false;
+      });
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Erreur lors du rafraîchissement'),
+          backgroundColor: Color(0xFFFF6B35),
+        ),
+      );
+    }
+  }
+
+  void _searchSongs(String query) {
+    setState(() {
+      if (query.isEmpty) {
+        _filteredSongs = _allSongs;
+      } else {
+        String searchLower = query.toLowerCase();
+        _filteredSongs = _allSongs.where((song) {
+          return song.title.toLowerCase().contains(searchLower) ||
+                 song.artist.toLowerCase().contains(searchLower);
+        }).toList();
+      }
+    });
+  }
+
+  void _toggleFavorite(Song song) {
+    setState(() {
+      song.isFavorite = !song.isFavorite;
+      
+      if (song.isFavorite) {
+        if (!_favoriteSongs.contains(song)) {
+          _favoriteSongs.add(song);
+        }
+      } else {
+        _favoriteSongs.remove(song);
+      }
+    });
+    
+    // TODO: Sauvegarder dans Hive
+  }
+
   @override
   void dispose() {
     _tabController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -85,23 +158,32 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       body: SafeArea(
         child: Column(
           children: [
-            // Header with logo and title
+            // Header avec logo et titre
             _buildHeader(),
+            
+            // Barre de recherche (affichée seulement sur l'onglet "Tout")
+            if (_selectedTabIndex == 0) _buildSearchBar(),
             
             // Tabs
             _buildTabs(),
             
-            // Content
+            // Contenu
             Expanded(
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  _buildRecentsTab(),
-                  _buildPlaylistsTab(),
-                  _buildFavoritesTab(),
-                  _buildHistoryTab(),
-                ],
-              ),
+              child: _isLoading
+                  ? const Center(
+                      child: CircularProgressIndicator(
+                        color: Color(0xFF00D9FF),
+                      ),
+                    )
+                  : TabBarView(
+                      controller: _tabController,
+                      children: [
+                        _buildRecentsTab(),
+                        _buildPlaylistsTab(),
+                        _buildFavoritesTab(),
+                        _buildHistoryTab(),
+                      ],
+                    ),
             ),
             
             // Mini Player
@@ -167,23 +249,74 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           ),
           const SizedBox(width: 16),
           // Title
-          const Text(
-            'Vibz',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 32,
-              fontWeight: FontWeight.bold,
-              fontStyle: FontStyle.italic,
+          const Expanded(
+            child: Text(
+              'Vibz',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 32,
+                fontWeight: FontWeight.bold,
+                fontStyle: FontStyle.italic,
+              ),
             ),
+          ),
+          // Refresh button
+          IconButton(
+            icon: const Icon(
+              Icons.refresh,
+              color: Color(0xFF00D9FF),
+            ),
+            onPressed: _refreshLibrary,
           ),
         ],
       ),
     );
   }
 
+  Widget _buildSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      child: TextField(
+        controller: _searchController,
+        onChanged: _searchSongs,
+        style: const TextStyle(color: Colors.white),
+        decoration: InputDecoration(
+          hintText: 'Rechercher une chanson ou artiste...',
+          hintStyle: const TextStyle(color: Color(0xFFB3B3B3)),
+          prefixIcon: const Icon(
+            Icons.search,
+            color: Color(0xFF00D9FF),
+          ),
+          suffixIcon: _searchController.text.isNotEmpty
+              ? IconButton(
+                  icon: const Icon(
+                    Icons.clear,
+                    color: Color(0xFFB3B3B3),
+                  ),
+                  onPressed: () {
+                    _searchController.clear();
+                    _searchSongs('');
+                  },
+                )
+              : null,
+          filled: true,
+          fillColor: const Color(0xFF2A2A2A),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide.none,
+          ),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 12,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildTabs() {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
         color: const Color(0xFF2A2A2A),
         borderRadius: BorderRadius.circular(12),
@@ -205,7 +338,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           fontWeight: FontWeight.w600,
         ),
         tabs: const [
-          Tab(text: 'Récents'),
+          Tab(text: 'Tout'),
           Tab(text: 'Playlists'),
           Tab(text: 'Favoris'),
           Tab(text: 'Historique'),
@@ -219,118 +352,151 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const SizedBox(height: 16),
+          
+          // Stats de la bibliothèque
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _buildStatCard(
+                  'Chansons',
+                  widget.libraryStats['totalSongs']?.toString() ?? '0',
+                  Icons.music_note,
+                ),
+                _buildStatCard(
+                  'Albums',
+                  widget.libraryStats['totalAlbums']?.toString() ?? '0',
+                  Icons.album,
+                ),
+                _buildStatCard(
+                  'Artistes',
+                  widget.libraryStats['totalArtists']?.toString() ?? '0',
+                  Icons.person,
+                ),
+              ],
+            ),
+          ),
+          
           const SizedBox(height: 24),
           
-          // Recently played albums section
+          // Albums récents (si disponibles)
+          if (_recentAlbums.isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Albums Récents',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      // TODO: Show all albums
+                    },
+                    child: const Text(
+                      'Voir tout',
+                      style: TextStyle(
+                        color: Color(0xFF00D9FF),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              height: 190,
+              child: ListView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                scrollDirection: Axis.horizontal,
+                itemCount: _recentAlbums.length,
+                itemBuilder: (context, index) {
+                  return AlbumCard(
+                    album: _recentAlbums[index],
+                    onTap: () {
+                      print('Tapped album: ${_recentAlbums[index].name}');
+                    },
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 24),
+          ],
+          
+          // Toutes les musiques
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  'Écoutés Récemment',
-                  style: TextStyle(
+                Text(
+                  _searchController.text.isEmpty
+                      ? 'Toutes les Musiques'
+                      : 'Résultats (${_filteredSongs.length})',
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                TextButton(
-                  onPressed: () {
-                    // TODO: Show all recent albums
-                  },
-                  child: const Text(
-                    'Voir tout',
-                    style: TextStyle(
-                      color: Color(0xFF00D9FF),
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
               ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          
-          // Albums carousel
-          SizedBox(
-            height: 190,
-            child: ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              scrollDirection: Axis.horizontal,
-              itemCount: _recentAlbums.length,
-              itemBuilder: (context, index) {
-                return AlbumCard(
-                  album: _recentAlbums[index],
-                  onTap: () {
-                    // TODO: Navigate to album details
-                    print('Tapped album: ${_recentAlbums[index].name}');
-                  },
-                );
-              },
-            ),
-          ),
-          
-          // Carousel indicators
-          const SizedBox(height: 16),
-          Center(
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: List.generate(
-                _recentAlbums.length,
-                (index) => Container(
-                  width: 6,
-                  height: 6,
-                  margin: const EdgeInsets.symmetric(horizontal: 3),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: index == 0
-                        ? const Color(0xFF00D9FF)
-                        : const Color(0xFF4A4A4A),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          
-          const SizedBox(height: 32),
-          
-          // All songs section
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 20),
-            child: Text(
-              'Toutes les Musiques',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
             ),
           ),
           const SizedBox(height: 8),
           
-          // Songs list
-          ListView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: _allSongs.length,
-            itemBuilder: (context, index) {
-              return SongListTile(
-                song: _allSongs[index],
-                onTap: () {
-                  setState(() {
-                    _currentSong = _allSongs[index];
-                    _isPlaying = true;
-                  });
-                },
-                onFavoriteToggle: () {
-                  // TODO: Save to favorites
-                  print('Favorite toggled: ${_allSongs[index].title}');
-                },
-              );
-            },
-          ),
+          // Liste des chansons
+          if (_filteredSongs.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(40),
+              child: Center(
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.music_off,
+                      color: Color(0xFFB3B3B3),
+                      size: 64,
+                    ),
+                    SizedBox(height: 16),
+                    Text(
+                      'Aucune chanson trouvée',
+                      style: TextStyle(
+                        color: Color(0xFFB3B3B3),
+                        fontSize: 16,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            ListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: _filteredSongs.length,
+              itemBuilder: (context, index) {
+                return SongListTile(
+                  song: _filteredSongs[index],
+                  onTap: () {
+                    setState(() {
+                      _currentSong = _filteredSongs[index];
+                      _isPlaying = true;
+                    });
+                  },
+                  onFavoriteToggle: () {
+                    _toggleFavorite(_filteredSongs[index]);
+                  },
+                );
+              },
+            ),
           
           const SizedBox(height: 80), // Space for mini player
         ],
@@ -338,41 +504,156 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
+  Widget _buildStatCard(String label, String value, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2A2A2A),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          Icon(
+            icon,
+            color: const Color(0xFF00D9FF),
+            size: 32,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFFB3B3B3),
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPlaylistsTab() {
     return const Center(
-      child: Text(
-        'Playlists\n(À implémenter)',
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: 16,
-        ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.queue_music,
+            color: Color(0xFFB3B3B3),
+            size: 64,
+          ),
+          SizedBox(height: 16),
+          Text(
+            'Playlists',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          SizedBox(height: 8),
+          Text(
+            'À implémenter dans la Phase 4',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Color(0xFFB3B3B3),
+              fontSize: 14,
+            ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildFavoritesTab() {
-    return const Center(
-      child: Text(
-        'Favoris\n(À implémenter)',
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: 16,
-        ),
-      ),
-    );
+    return _favoriteSongs.isEmpty
+        ? const Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.favorite_border,
+                  color: Color(0xFFB3B3B3),
+                  size: 64,
+                ),
+                SizedBox(height: 16),
+                Text(
+                  'Aucun favori',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                SizedBox(height: 8),
+                Text(
+                  'Ajoutez des chansons à vos favoris',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Color(0xFFB3B3B3),
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+          )
+        : ListView.builder(
+            padding: const EdgeInsets.only(top: 16, bottom: 80),
+            itemCount: _favoriteSongs.length,
+            itemBuilder: (context, index) {
+              return SongListTile(
+                song: _favoriteSongs[index],
+                onTap: () {
+                  setState(() {
+                    _currentSong = _favoriteSongs[index];
+                    _isPlaying = true;
+                  });
+                },
+                onFavoriteToggle: () {
+                  _toggleFavorite(_favoriteSongs[index]);
+                },
+              );
+            },
+          );
   }
 
   Widget _buildHistoryTab() {
     return const Center(
-      child: Text(
-        'Historique\n(À implémenter)',
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: 16,
-        ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.history,
+            color: Color(0xFFB3B3B3),
+            size: 64,
+          ),
+          SizedBox(height: 16),
+          Text(
+            'Historique',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          SizedBox(height: 8),
+          Text(
+            'À implémenter dans la Phase 4',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Color(0xFFB3B3B3),
+              fontSize: 14,
+            ),
+          ),
+        ],
       ),
     );
   }

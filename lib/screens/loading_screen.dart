@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../services/audio_library_service.dart';
 import '../services/permission_service.dart';
-import '../models/song.dart';
+import '../providers/library_provider.dart';
+import '../providers/playlist_provider.dart';
+import '../providers/history_provider.dart';
+
 import 'home_screen.dart';
 
 class LoadingScreen extends StatefulWidget {
@@ -50,14 +54,12 @@ class _LoadingScreenState extends State<LoadingScreen> {
       bool hasPermission = await PermissionService.hasAudioPermission();
       
       if (!hasPermission) {
-        // Afficher d'abord la justification
         setState(() {
           _showPermissionRationale = true;
           _statusMessage = 'Permission requise';
           _progress = 0.25;
         });
 
-        // Attendre 2 secondes pour que l'utilisateur lise
         await Future.delayed(const Duration(seconds: 2));
 
         setState(() {
@@ -69,7 +71,6 @@ class _LoadingScreenState extends State<LoadingScreen> {
         hasPermission = await PermissionService.requestAudioPermission();
         
         if (!hasPermission) {
-          // Vérifier si refusée définitivement
           PermissionStatus status = await PermissionService.getAudioPermissionStatus();
           
           setState(() {
@@ -91,27 +92,51 @@ class _LoadingScreenState extends State<LoadingScreen> {
 
       print('✅ Permissions OK, démarrage du scan...');
 
-      // Étape 3: Scanner la bibliothèque
+      // Étape 3: Initialiser LibraryProvider
       setState(() {
-        _statusMessage = 'Scan de votre bibliothèque musicale...';
-        _progress = 0.5;
+        _statusMessage = 'Chargement de la bibliothèque...';
+        _progress = 0.4;
+      });
+
+      final libraryProvider = Provider.of<LibraryProvider>(context, listen: false);
+      await libraryProvider.initialize();
+
+      setState(() {
+        _statusMessage = '${libraryProvider.allSongs.length} chanson${libraryProvider.allSongs.length > 1 ? 's' : ''} détectée${libraryProvider.allSongs.length > 1 ? 's' : ''}';
+        _progress = 0.6;
       });
 
       await Future.delayed(const Duration(milliseconds: 500));
 
-      List<Song> songs = await _libraryService.scanAudioFiles();
-
-      print('📁 ${songs.length} chansons trouvées');
-
+      // Étape 4: Initialiser PlaylistProvider
       setState(() {
-        _statusMessage = '${songs.length} chanson${songs.length > 1 ? 's' : ''} détectée${songs.length > 1 ? 's' : ''}';
-        _progress = 0.8;
+        _statusMessage = 'Chargement des playlists...';
+        _progress = 0.75;
       });
 
-      await Future.delayed(const Duration(milliseconds: 500));
+      final playlistProvider = Provider.of<PlaylistProvider>(context, listen: false);
+      await playlistProvider.initialize();
 
-      // Étape 4: Récupérer les statistiques
-      Map<String, int> stats = await _libraryService.getLibraryStats();
+      await Future.delayed(const Duration(milliseconds: 300));
+
+      // Étape 5: Initialiser HistoryProvider
+      setState(() {
+        _statusMessage = 'Chargement de l\'historique...';
+        _progress = 0.85;
+      });
+
+      final historyProvider = Provider.of<HistoryProvider>(context, listen: false);
+      await historyProvider.initialize();
+
+      await Future.delayed(const Duration(milliseconds: 300));
+
+      // Étape 6: Charger les albums
+      setState(() {
+        _statusMessage = 'Chargement des albums...';
+        _progress = 0.95;
+      });
+
+      await libraryProvider.loadAlbums();
 
       setState(() {
         _statusMessage = 'Finalisation...';
@@ -124,10 +149,7 @@ class _LoadingScreenState extends State<LoadingScreen> {
       if (mounted) {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
-            builder: (context) => HomeScreen(
-              initialSongs: songs,
-              libraryStats: stats,
-            ),
+            builder: (context) => const HomeScreen(),
           ),
         );
       }
@@ -156,7 +178,6 @@ class _LoadingScreenState extends State<LoadingScreen> {
 
   Future<void> _openSettings() async {
     await openAppSettings();
-    // Après le retour des paramètres, réessayer
     await Future.delayed(const Duration(seconds: 1));
     _retryInitialization();
   }
@@ -210,7 +231,6 @@ class _LoadingScreenState extends State<LoadingScreen> {
               
               const SizedBox(height: 48),
 
-              // Titre
               const Text(
                 'Vibz',
                 style: TextStyle(
@@ -233,9 +253,7 @@ class _LoadingScreenState extends State<LoadingScreen> {
 
               const SizedBox(height: 64),
 
-              // Contenu conditionnel
               if (_showPermissionRationale) ...[
-                // Justification de la permission
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
@@ -272,7 +290,6 @@ class _LoadingScreenState extends State<LoadingScreen> {
                   ),
                 ),
               ] else if (_hasError) ...[
-                // Affichage d'erreur
                 Icon(
                   _isPermissionPermanentlyDenied 
                       ? Icons.settings_outlined 
@@ -292,9 +309,7 @@ class _LoadingScreenState extends State<LoadingScreen> {
                 ),
                 const SizedBox(height: 32),
                 
-                // Boutons d'action
                 if (_isPermissionPermanentlyDenied) ...[
-                  // Permission refusée définitivement - Ouvrir les paramètres
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
@@ -315,7 +330,6 @@ class _LoadingScreenState extends State<LoadingScreen> {
                     ),
                   ),
                 ] else ...[
-                  // Permission simplement refusée - Réessayer
                   Row(
                     children: [
                       Expanded(
@@ -357,7 +371,6 @@ class _LoadingScreenState extends State<LoadingScreen> {
                   ),
                 ],
               ] else ...[
-                // Barre de progression
                 SizedBox(
                   width: 250,
                   child: Column(

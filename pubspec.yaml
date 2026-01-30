@@ -45,6 +45,7 @@ dependencies:
   build_runner: ^2.4.13
   on_audio_query: ^2.9.0
   device_info_plus: ^12.3.0
+  uuid: ^4.5.2
 
 dev_dependencies:
   flutter_test:
